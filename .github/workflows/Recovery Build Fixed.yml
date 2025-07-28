@@ -124,6 +124,15 @@ jobs:
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
+    - name: Patch device tree for TWRP(Deepseek Solution)
+      run: |
+        sed -i 's|vendor/omni/config/common.mk|vendor/twrp/config/common.mk|g' ${{ github.event.inputs.DEVICE_PATH }}/device.mk
+        sed -i 's|PRODUCT_NAME := omni_|PRODUCT_NAME := twrp_|g' ${{ github.event.inputs.DEVICE_PATH }}/device.mk
+        if [ ! -d "vendor/twrp" ]; then
+          git clone https://github.com/minimal-manifest-twrp/vendor_twrp vendor/twrp -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
     - name: Clone common tree
       if: |
         github.event.inputs.COMMON_TREE_URL != null
