@@ -118,11 +118,7 @@ jobs:
       run: |
         repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
-        echo "验证zopflipng位置:"
-        which zopflipng
-        ls -l /usr/bin/zopflipng
-        ls -l ${GITHUB_WORKSPACE}/workspace/out/host/linux-x86/bin/zopflipng
-
+        
     - name: Clone device tree
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
