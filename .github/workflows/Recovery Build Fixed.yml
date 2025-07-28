@@ -1,4 +1,4 @@
-name: Recovery Build Fixed
+name: Recovery Build (Fixed Version)
 
 on:
   workflow_dispatch:
@@ -78,9 +78,9 @@ jobs:
             xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
             build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
             imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
-
-        # Explicitly install zopfli and its tools
-        sudo apt install -y zopfli
+        
+        # 显式安装zopfli工具链
+        sudo apt install -y zopfli zopflipng
 
     - name: Install OpenJDK
       uses: actions/setup-java@v4
@@ -119,18 +119,26 @@ jobs:
         repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
 
-    - name: Clone device tree
+    - name: Patch Build System
       run: |
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Patch device tree for TWRP(Deepseek Solution)
-      run: |
-        sed -i 's|vendor/omni/config/common.mk|vendor/twrp/config/common.mk|g' ${{ github.event.inputs.DEVICE_PATH }}/device.mk
-        sed -i 's|PRODUCT_NAME := omni_|PRODUCT_NAME := twrp_|g' ${{ github.event.inputs.DEVICE_PATH }}/device.mk
+        # 禁用roomservice的Gerrit查询
+        sed -i 's/^\(.*fetch_device(device)\)/#\1/' vendor/omni/build/tools/roomservice.py
+        
+        # 确保使用本地设备树
+        echo "SKIP_DEVICE_TREE_VERIFICATION := true" >> ${{ github.event.inputs.DEVICE_PATH }}/BoardConfig.mk
+        
+        # 修复产品继承链
+        sed -i 's|vendor/omni/config/common.mk|vendor/twrp/config/common.mk|g' ${{ github.event.inputs.DEVICE_PATH }}/*.mk
+        
+        # 确保TWRP vendor配置存在
         if [ ! -d "vendor/twrp" ]; then
           git clone https://github.com/minimal-manifest-twrp/vendor_twrp vendor/twrp -b ${{ github.event.inputs.MANIFEST_BRANCH }}
         fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Clone device tree
+      run: |
+        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
@@ -161,13 +169,39 @@ jobs:
       with:
         swap-size-gb: 12
 
+    - name: Validate Build Configuration
+      run: |
+        echo "===== Architecture Verification ====="
+        grep -E "TARGET_ARCH|TARGET_KERNEL_ARCH" ${{ github.event.inputs.DEVICE_PATH }}/BoardConfig.mk || true
+        
+        echo "===== Product Makefile Check ====="
+        ls -la ${{ github.event.inputs.DEVICE_PATH }}/*.mk
+        
+        echo "===== Vendor Config Check ====="
+        ls -la vendor/twrp/config/common.mk
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
     - name: Building recovery
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        # Verify zopflipng is available
+        export LC_ALL=C
+        
+        # 手动设置构建目标（绕过lunch检查）
+        export TARGET_DEVICE=${{ github.event.inputs.DEVICE_NAME }}
+        export TARGET_PRODUCT=${{ github.event.inputs.MAKEFILE_NAME }}
+        
+        # 验证zopflipng可用性
         which zopflipng || { echo "zopflipng not found!"; exit 1; }
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+        
+        make -j$(($(nproc --all)*2)) ${{ github.event.inputs.BUILD_TARGET }}image 2>&1 | tee build.log
+        
+        # 构建失败分析
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Build failed!"
+            grep -iE 'error|fail' build.log | head -n 50
+            exit 1
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload to Release
