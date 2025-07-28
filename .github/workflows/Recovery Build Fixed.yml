@@ -196,23 +196,7 @@ jobs:
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
-
-    - name: Validate Build Configuration
-      run: |
-        echo "===== Architecture Verification ====="
-        grep -E "TARGET_ARCH|TARGET_KERNEL_ARCH" ${{ github.event.inputs.DEVICE_PATH }}/BoardConfig.mk || true
-        
-        echo "===== Product Makefile Check ====="
-        ls -la ${{ github.event.inputs.DEVICE_PATH }}/*.mk
-        
-        echo "===== Vendor Config Check ====="
-        ls -la vendor/twrp/config/common.mk
-        
-        echo "===== zopflipng Verification ====="
-        which zopflipng
-        zopflipng --version || echo "无法获取版本信息"
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
+    
     - name: Building recovery
       run: |
         # 确保使用自定义安装的zopflipng
