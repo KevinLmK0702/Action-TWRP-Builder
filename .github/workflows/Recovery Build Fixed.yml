@@ -164,23 +164,6 @@ jobs:
         repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
 
-    - name: Patch Build System
-      run: |
-        # 禁用roomservice的Gerrit查询
-        sed -i 's/^\(.*fetch_device(device)\)/#\1/' vendor/omni/build/tools/roomservice.py
-        
-        # 确保使用本地设备树
-        echo "SKIP_DEVICE_TREE_VERIFICATION := true" >> ${{ github.event.inputs.DEVICE_PATH }}/BoardConfig.mk
-        
-        # 修复产品继承链
-        sed -i 's|vendor/omni/config/common.mk|vendor/twrp/config/common.mk|g' ${{ github.event.inputs.DEVICE_PATH }}/*.mk
-        
-        # 确保TWRP vendor配置存在
-        if [ ! -d "vendor/twrp" ]; then
-          git clone https://github.com/minimal-manifest-twrp/vendor_twrp vendor/twrp -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-        fi
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
     - name: Clone device tree
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
