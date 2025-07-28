@@ -6,23 +6,23 @@ on:
       MANIFEST_URL:
         description: 'MANIFEST_URL (if want to use SSH keys, use git@github.com:XXXXX)'
         required: true
-        default: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp'
+        default: 'https://github.com/momo54181/platform_manifest_twrp_omni'
       MANIFEST_BRANCH:
         description: 'MANIFEST_BRANCH'
         required: true
-        default: 'twrp-12.1'
+        default: 'twrp-10.0-deprecated'
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
-        default: 'https://github.com/TeamWin/android_device_asus_I003D'
+        default: 'https://github.com/KevinLmK0702/android_device_omni_k6853v1_64'
       DEVICE_TREE_BRANCH:
         description: 'DEVICE_TREE_BRANCH'
         required: true
-        default: 'android-12.1'
+        default: 'master'
       DEVICE_PATH:
         description: 'DEVICE_PATH'
         required: true
-        default: 'device/asus/I003D'
+        default: 'device/alps/k6853v1_64'
       COMMON_TREE_URL:
         description: 'COMMON_TREE_URL (if no common tree, leave blank)'
         required: false
@@ -32,11 +32,11 @@ on:
       DEVICE_NAME:
         description: 'DEVICE_NAME'
         required: true
-        default: 'I003D'
+        default: 'k6853v1_64'
       MAKEFILE_NAME:
         description: 'MAKEFILE_NAME'
         required: true
-        default: 'twrp_I003D'
+        default: 'omni_k6853v1_64'
       BUILD_TARGET:
         description: 'BUILD_TARGET'
         required: true
@@ -71,16 +71,61 @@ jobs:
     - name: Prepare the environment
       run: |
         sudo apt update && sudo apt upgrade -y
+        sudo add-apt-repository universe -y
+        sudo apt update
+        
+        # 安装所有依赖包（包括zopfli）
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+            zopfli libzopfli-dev \
             linux-modules-extra-$(uname -r) \
             gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
             libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
             xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
             build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
             imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
+
+        # 三阶段安装zopflipng
+        echo "=== 开始安装 zopflipng ==="
         
-        # 显式安装zopfli工具链
-        sudo apt install -y zopfli zopflipng
+        # 阶段1：尝试系统包安装
+        echo "::group::尝试通过apt安装zopflipng"
+        if sudo apt install -y zopflipng 2>/dev/null; then
+          echo "成功通过系统包安装zopflipng"
+          zopflipng --version || echo "无法获取版本信息"
+        else
+          echo "::warning::系统包安装失败，进入阶段2：源码编译"
+          
+          # 阶段2：源码编译
+          echo "::group::从源码编译zopflipng"
+          git clone https://github.com/google/zopfli.git
+          cd zopfli
+          if make zopflipng; then
+            echo "源码编译成功"
+            sudo mv zopflipng /usr/local/bin/
+            zopflipng --version || echo "无法获取版本信息"
+          else
+            echo "::warning::源码编译失败，进入阶段3：预编译版本"
+            
+            # 阶段3：预编译版本
+            echo "::group::使用预编译版本"
+            curl -L https://github.com/google/zopfli/releases/download/zopfli-1.0.3/zopflipng-linux-x64 -o zopflipng
+            chmod +x zopflipng
+            sudo mv zopflipng /usr/local/bin/
+            /usr/local/bin/zopflipng --version || echo "预编译版本"
+          fi
+          cd ..
+          rm -rf zopfli
+        fi
+        echo "::endgroup::"
+
+        # 最终验证
+        if ! which zopflipng >/dev/null; then
+          echo "::error::所有安装方法均失败！"
+          exit 1
+        else
+          echo "zopflipng 已成功安装于: $(which zopflipng)"
+          zopflipng --version || echo "版本信息不可用"
+        fi
 
     - name: Install OpenJDK
       uses: actions/setup-java@v4
@@ -179,10 +224,21 @@ jobs:
         
         echo "===== Vendor Config Check ====="
         ls -la vendor/twrp/config/common.mk
+        
+        echo "===== zopflipng Verification ====="
+        which zopflipng
+        zopflipng --version || echo "无法获取版本信息"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Building recovery
       run: |
+        # 确保使用自定义安装的zopflipng
+        export PATH="/usr/local/bin:$PATH"
+        
+        echo "===== 构建环境验证 ====="
+        echo "zopflipng 路径: $(which zopflipng)"
+        zopflipng --version || echo "无法获取版本信息"
+        
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export LC_ALL=C
@@ -191,17 +247,18 @@ jobs:
         export TARGET_DEVICE=${{ github.event.inputs.DEVICE_NAME }}
         export TARGET_PRODUCT=${{ github.event.inputs.MAKEFILE_NAME }}
         
-        # 验证zopflipng可用性
-        which zopflipng || { echo "zopflipng not found!"; exit 1; }
-        
+        echo "===== 开始构建 ====="
         make -j$(($(nproc --all)*2)) ${{ github.event.inputs.BUILD_TARGET }}image 2>&1 | tee build.log
         
         # 构建失败分析
         if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "::error::Build failed!"
+            echo "::error::构建失败！以下是错误摘要："
             grep -iE 'error|fail' build.log | head -n 50
             exit 1
         fi
+        
+        echo "===== 构建产物检查 ====="
+        ls -lh out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img || true
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload to Release
@@ -217,5 +274,9 @@ jobs:
           Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
           Device: ${{ github.event.inputs.DEVICE_NAME }}
           Target: ${{ github.event.inputs.BUILD_TARGET }}.img
+          
+          构建环境信息:
+          - Ubuntu 24.04
+          - zopflipng 版本: $(zopflipng --version 2>&1 || echo "未知")
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
